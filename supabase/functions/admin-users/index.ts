@@ -18,9 +18,8 @@ Deno.serve(async (req) => {
 
   try {
     const url = Deno.env.get("SUPABASE_URL")!;
-    const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    if (!url || !anonKey || !serviceKey) {
+    if (!url || !serviceKey) {
       return reply({ error: "The admin-users function is missing its Supabase secrets." }, 500);
     }
 
@@ -28,16 +27,11 @@ Deno.serve(async (req) => {
     const token = authHeader.replace(/^Bearer\s+/i, "");
     if (!token) return reply({ error: "You must be logged in." }, 401);
 
-    const userClient = createClient(url, anonKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
-    const { data: authData, error: authError } = await userClient.auth.getUser(token);
-    if (authError || !authData.user) return reply({ error: "Your session is not valid." }, 401);
-
     const adminClient = createClient(url, serviceKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
+    const { data: authData, error: authError } = await adminClient.auth.getUser(token);
+    if (authError || !authData.user) return reply({ error: "Your session is not valid." }, 401);
 
     const { data: ownerProfile, error: ownerError } = await adminClient
       .from("profiles")
@@ -89,8 +83,12 @@ Deno.serve(async (req) => {
     }
 
     if (action === "delete") {
-      await adminClient.from("scores").delete().eq("user_id", target.id);
-      await adminClient.from("game_saves").delete().eq("user_id", target.id);
+      const scoresResult = await adminClient.from("scores").delete().eq("user_id", target.id);
+      if (scoresResult.error) throw scoresResult.error;
+      const savesResult = await adminClient.from("game_saves").delete().eq("user_id", target.id);
+      if (savesResult.error) throw savesResult.error;
+      const profileResult = await adminClient.from("profiles").delete().eq("id", target.id);
+      if (profileResult.error) throw profileResult.error;
       const { error } = await adminClient.auth.admin.deleteUser(target.id);
       if (error) throw error;
       return reply({ success: true, username: target.username });
